@@ -1,0 +1,38 @@
+- name: install httpd
+  yum:
+    name: httpd
+  register: install_httpd
+
+- name: remove default files
+  when: install_httpd.changed
+  file:
+    dest: "/etc/httpd/conf.d/{{ item }}"
+    state: absent
+  loop:
+    - README
+    - autoindex.conf
+    - userdir.conf
+    - welcome.conf
+
+- name: put config
+  template:
+    src: "httpd.conf"
+    dest: "/etc/httpd/conf/httpd.conf"
+    backup: yes
+  notify: reload httpd
+
+- name: put vhost configs
+  template:
+    src: "{{ item }}"
+    dest: "/etc/httpd/conf.d/{{ item }}"
+    backup: yes
+  loop:
+    - 0-web.conf
+    - 1-admin.conf
+  notify: reload httpd
+
+- name: enable httpd
+  systemd:
+    name: httpd
+    state: started
+    enabled: yes

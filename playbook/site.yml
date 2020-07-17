@@ -1,0 +1,10 @@
+- hosts: all
+  user: ec2-user
+  become: yes
+  roles:
+    - common
+    - cloudwatch_agent
+    - httpd
+    - php
+    - efs
+    - mysql_client

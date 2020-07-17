@@ -1,0 +1,17 @@
+- name: check cloudwatch-agent exists
+  yum:
+    list: amazon-cloudwatch-agent
+  register: cwagent_exist
+
+- name: install cloudwatch-agent
+  when: cwagent_exist.results | selectattr("yumstate", "match", "installed") | list | length == 0
+  yum:
+    name: https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+    state: present
+
+- name: put config
+  template:
+    src: config.json
+    dest: "/opt/aws/amazon-cloudwatch-agent/bin/config.json"
+    backup: yes
+  notify: reload cloudwatch-agent

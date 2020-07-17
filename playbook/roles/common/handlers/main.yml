@@ -1,0 +1,13 @@
+# refrect timezone to crond
+- name: restart crond
+  systemd:
+    name: crond
+    state: restarted
+  listen: apply timezone
+
+# refrect timezone to /var/log/cron
+- name: restart rsyslog
+  systemd:
+    name: rsyslog
+    state: restarted
+  listen: apply timezone

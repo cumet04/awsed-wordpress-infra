@@ -1,0 +1,60 @@
+- name: change timezone
+  timezone:
+    name: Asia/Tokyo
+  notify: apply timezone
+
+- name: put user bashrc
+  copy:
+    src: user_bashrc
+    dest: "{{ ansible_env.HOME }}/.bashrc"
+
+# swapfile
+
+- name: check file swapfile
+  stat:
+    path: /swapfile
+  register: swapfile
+
+- name: setup swapfile
+  when:
+    - not swapfile.stat.exists
+    - swap_size_gb > 0
+  block:
+    - name: make swapfile
+      command: dd if=/dev/zero of=/swapfile bs=1024k count={{ swap_size_gb * 1024 }}
+      args:
+        creates: /swapfile
+    - name: change file mode bits
+      file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: 0600
+    - name: set up a Linux swap area
+      command: mkswap /swapfile
+    - name: setting auto mount
+      mount:
+        name: swap
+        src: /swapfile
+        fstype: swap
+        opts: defaults
+        passno: "0"
+        dump: "0"
+        state: present
+    - name: enable swapfiles
+      command: swapon -a
+
+# packages
+
+- name: install common packages
+  yum:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - strace
+    - ltrace
+    - dstat
+    - iotop
+    - sysstat
+    - jq
+    - htop

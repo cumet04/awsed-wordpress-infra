@@ -1,0 +1,11 @@
+- name: httpd config test
+  shell: "apachectl configtest"
+  changed_when: false
+  listen: reload httpd
+
+- name: reload httpd service
+  systemd:
+    name: httpd
+    state: reloaded
+    daemon_reload: yes
+  listen: reload httpd

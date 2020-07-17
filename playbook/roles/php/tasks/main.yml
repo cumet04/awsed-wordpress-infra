@@ -1,0 +1,11 @@
+- name: enable php repository
+  shell: "amazon-linux-extras enable php7.4"
+  changed_when: false
+
+- name: install php packages
+  yum:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - php
+    - php-mysqlnd

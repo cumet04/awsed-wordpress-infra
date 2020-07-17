@@ -1,0 +1,5 @@
+# mysql/mysqldump cli for maintenance
+
+- name: install mariadb
+  yum:
+    name: mariadb
