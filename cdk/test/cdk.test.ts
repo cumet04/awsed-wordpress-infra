@@ -9,7 +9,14 @@ import * as Cdk from "../lib/cdk-stack";
 test("Empty Stack", () => {
   const app = new cdk.App();
   // WHEN
-  const stack = new Cdk.CdkStack(app, "MyTestStack");
+  const env = process.env;
+  const stack = new Cdk.CdkStack(app, "MyTestStack", {
+    // TODO: tmp params
+    albCertArn: env.ALB_CERT_ARN!,
+    dbName: "wordpress",
+    dbUser: "wordpress",
+    amiName: "wordpress",
+  });
   // THEN
   expectCDK(stack).to(
     matchTemplate(
