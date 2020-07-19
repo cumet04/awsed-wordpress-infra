@@ -5,12 +5,21 @@ import * as ec2 from "@aws-cdk/aws-ec2";
 import * as efs from "@aws-cdk/aws-efs";
 import * as iam from "@aws-cdk/aws-iam";
 import * as rds from "@aws-cdk/aws-rds";
+import * as waf from "@aws-cdk/aws-wafv2";
+import * as cloudfront from "@aws-cdk/aws-cloudfront";
+import * as acm from "@aws-cdk/aws-certificatemanager";
 
 interface IParams {
+  frontCertArn: string;
+  albDomain: string;
   albCertArn: string;
+  albKeyName: string;
+  albKeyValue: string;
+  isOnwerOnly: boolean;
   dbName: string;
   dbUser: string;
   amiName: string;
+  ownerIps: string[];
 }
 
 export class CdkStack extends cdk.Stack {
@@ -56,10 +65,20 @@ export class CdkStack extends cdk.Stack {
     );
     // cloudwatch
 
-    this.createALB(vpc, sgALB, snIngress, group, params.albCertArn);
-
-    // WAF
-    // Cloudfront
+    const alb = this.createALB(vpc, sgALB, snIngress, group, params.albCertArn);
+    this.createWAF(
+      alb.loadBalancerArn,
+      params.ownerIps,
+      params.isOnwerOnly,
+      params.albKeyName,
+      params.albKeyValue
+    );
+    this.createCloudfront(
+      params.frontCertArn,
+      params.albDomain,
+      params.albKeyName,
+      params.albKeyValue
+    );
   }
 
   createVpc(): {
@@ -100,7 +119,6 @@ export class CdkStack extends cdk.Stack {
     const sgALB = new ec2.SecurityGroup(this, "sgALB", { vpc });
     sgALB.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80));
     sgALB.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443));
-    // TODO: IP絞る; WAF?
 
     const sgApp = new ec2.SecurityGroup(this, "sgApp", { vpc });
     sgApp.addIngressRule(sgALB, ec2.Port.tcp(80));
@@ -113,9 +131,12 @@ export class CdkStack extends cdk.Stack {
 
     // VPC endpoints ---
     Object.entries({
+      // for cloudwatch logs
       vpcLogsEndpoint: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      // for SSM SSH
       vpcEc2mEndpoint: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
       vpcSsmmEndpoint: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
+      vpcSsmEndpoint: ec2.InterfaceVpcEndpointAwsService.SSM,
     }).forEach(([key, value]) => {
       vpc.addInterfaceEndpoint(key, {
         service: value,
@@ -221,7 +242,7 @@ mount -a -t efs defaults
       maxCapacity: 4,
       machineImage: new ec2.LookupMachineImage({
         name: amiName,
-        filters: { "owner-id": [this.account] },
+        filters: { "owner-id": [this.account], state: ["available"] },
       }),
       blockDevices: [
         {
@@ -246,7 +267,7 @@ mount -a -t efs defaults
     subnets: ec2.SubnetSelection,
     group: asg.AutoScalingGroup,
     certArn: string
-  ) {
+  ): elbv2.ApplicationLoadBalancer {
     const alb = new elbv2.ApplicationLoadBalancer(this, "ALB", {
       vpc,
       vpcSubnets: subnets,
@@ -270,10 +291,237 @@ mount -a -t efs defaults
         protocol: elbv2.ApplicationProtocol.HTTP,
         healthCheck: {
           path: "/",
-          healthyHttpCodes: "200,302",
+          healthyHttpCodes: "200",
           interval: cdk.Duration.seconds(60),
           timeout: cdk.Duration.seconds(30),
         },
       });
+
+    return alb;
+  }
+
+  createWAF(
+    albArn: string,
+    ownerIps: string[],
+    isOwnerOnly: boolean,
+    albKeyName: string,
+    albKeyValue: string
+  ) {
+    const vcNoLogging = {
+      cloudWatchMetricsEnabled: false,
+      metricName: "noLogging",
+      sampledRequestsEnabled: false,
+    };
+    const visibilityConfig = (name: string) => ({
+      cloudWatchMetricsEnabled: true,
+      metricName: name,
+      sampledRequestsEnabled: true,
+    });
+
+    const ipSet = new waf.CfnIPSet(this, "wafIpSet", {
+      addresses: ownerIps,
+      ipAddressVersion: "IPV4",
+      scope: "REGIONAL",
+    });
+    const ownerRule = new waf.CfnRuleGroup(this, "wafRuleGroupOwner", {
+      name: "owner",
+      capacity: 3,
+      scope: "REGIONAL",
+      visibilityConfig: vcNoLogging,
+      rules: [
+        {
+          name: "allowOwners",
+          priority: 0,
+          action: {
+            allow: {},
+          },
+          statement: {
+            ipSetReferenceStatement: {
+              arn: ipSet.attrArn,
+            },
+          },
+          visibilityConfig: vcNoLogging,
+        },
+        {
+          name: "denyAdmin",
+          priority: 1,
+          action: {
+            block: {},
+          },
+          statement: {
+            byteMatchStatement: {
+              searchString: "/wp-admin",
+              fieldToMatch: {
+                uriPath: {},
+              },
+              positionalConstraint: "STARTS_WITH",
+              textTransformations: [
+                {
+                  priority: 0,
+                  type: "NONE",
+                },
+              ],
+            },
+          },
+          visibilityConfig: vcNoLogging,
+        },
+      ],
+    });
+
+    const ownerOnlyRule = new waf.CfnRuleGroup(this, "wafRuleGroupOwnerOnly", {
+      name: "ownerOnly",
+      capacity: 1,
+      scope: "REGIONAL",
+      visibilityConfig: vcNoLogging,
+      rules: [
+        {
+          name: "denyNotOwners",
+          priority: 0,
+          action: {
+            block: {},
+          },
+          statement: {
+            notStatement: {
+              statement: {
+                ipSetReferenceStatement: {
+                  arn: ipSet.attrArn,
+                },
+              },
+            },
+          },
+          visibilityConfig: vcNoLogging,
+        },
+      ],
+    });
+
+    const cdnOnlyRule = new waf.CfnRuleGroup(this, "wafRuleGroupCdn", {
+      name: "cdnOnly",
+      capacity: 2,
+      scope: "REGIONAL",
+      visibilityConfig: vcNoLogging,
+      rules: [
+        {
+          name: "denyNoKey",
+          priority: 0,
+          action: {
+            block: {},
+          },
+          statement: {
+            notStatement: {
+              statement: {
+                byteMatchStatement: {
+                  searchString: albKeyValue,
+                  fieldToMatch: {
+                    singleHeader: {
+                      name: albKeyName,
+                    },
+                  },
+                  positionalConstraint: "EXACTLY",
+                  textTransformations: [
+                    {
+                      priority: 0,
+                      type: "NONE",
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          visibilityConfig: vcNoLogging,
+        },
+      ],
+    });
+
+    const customRules = [
+      ["owner", ownerRule.attrArn],
+      ["cdnOnly", cdnOnlyRule.attrArn],
+    ];
+    if (isOwnerOnly) {
+      customRules.push(["ownerOnly", ownerOnlyRule.attrArn]);
+    }
+    const managedRules = [
+      "AWSManagedRulesAmazonIpReputationList",
+      "AWSManagedRulesAnonymousIpList",
+      "AWSManagedRulesCommonRuleSet",
+      "AWSManagedRulesWordPressRuleSet",
+      "AWSManagedRulesPHPRuleSet",
+      "AWSManagedRulesSQLiRuleSet",
+      "AWSManagedRulesLinuxRuleSet",
+      "AWSManagedRulesUnixRuleSet",
+    ];
+
+    const acl = new waf.CfnWebACL(this, "wafACL", {
+      defaultAction: {
+        allow: {},
+      },
+      scope: "REGIONAL",
+      visibilityConfig: vcNoLogging,
+      rules: [
+        ...customRules.map((values, i) => ({
+          name: values[0],
+          priority: i,
+          overrideAction: { none: {} },
+          statement: {
+            ruleGroupReferenceStatement: {
+              arn: values[1],
+            },
+          },
+          visibilityConfig: visibilityConfig(values[0]),
+        })),
+
+        ...managedRules.map((name, i) => ({
+          name,
+          priority: i + Object.keys(customRules).length,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: "AWS",
+              name: name,
+            },
+          },
+          visibilityConfig: visibilityConfig(name),
+        })),
+      ],
+    });
+
+    new waf.CfnWebACLAssociation(this, "wafAssociation", {
+      resourceArn: albArn,
+      webAclArn: acl.attrArn,
+    });
+  }
+
+  createCloudfront(
+    certArn: string,
+    albDomain: string,
+    albKeyName: string,
+    albKeyValue: string
+  ) {
+    // MEMO: CNAMEは証明書が正しい必要があるため、別途AWSコンソールから指定する
+    new cloudfront.CloudFrontWebDistribution(this, "cdnDistribution", {
+      viewerCertificate: cloudfront.ViewerCertificate.fromAcmCertificate(
+        acm.Certificate.fromCertificateArn(this, "acmCdnCert", certArn)
+      ),
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_ALL,
+      originConfigs: [
+        {
+          customOriginSource: {
+            domainName: albDomain,
+          },
+          behaviors: [
+            {
+              isDefaultBehavior: true,
+              // MEMO: TTLは要件・コンテンツに合わせて要調整
+              defaultTtl: cdk.Duration.days(1),
+              minTtl: cdk.Duration.minutes(1),
+              maxTtl: cdk.Duration.days(3),
+            },
+          ],
+          originHeaders: {
+            [albKeyName]: albKeyValue,
+          },
+        },
+      ],
+    });
   }
 }
