@@ -3,5 +3,3 @@ all:
     i-xxxxxxxxxxxxxxxxx:
   vars:
     swap_size_gb: 1
-    web_server_name: www.stg.wordpress.example.com
-    admin_server_name: admin.stg.wordpress.example.com

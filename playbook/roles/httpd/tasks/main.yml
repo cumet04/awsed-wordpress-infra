@@ -21,16 +21,6 @@
     backup: yes
   notify: reload httpd
 
-- name: put vhost configs
-  template:
-    src: "{{ item }}"
-    dest: "/etc/httpd/conf.d/{{ item }}"
-    backup: yes
-  loop:
-    - 0-web.conf
-    - 1-admin.conf
-  notify: reload httpd
-
 - name: enable httpd
   systemd:
     name: httpd
