@@ -5,9 +5,12 @@ import * as ec2 from "@aws-cdk/aws-ec2";
 import * as efs from "@aws-cdk/aws-efs";
 import * as iam from "@aws-cdk/aws-iam";
 import * as rds from "@aws-cdk/aws-rds";
+import * as sns from "@aws-cdk/aws-sns";
 import * as waf from "@aws-cdk/aws-wafv2";
-import * as cloudfront from "@aws-cdk/aws-cloudfront";
 import * as acm from "@aws-cdk/aws-certificatemanager";
+import * as cloudwatch from "@aws-cdk/aws-cloudwatch";
+import * as cwactions from "@aws-cdk/aws-cloudwatch-actions";
+import * as cloudfront from "@aws-cdk/aws-cloudfront";
 
 interface IParams {
   frontCertArn: string;
@@ -42,7 +45,11 @@ export class CdkStack extends cdk.Stack {
       sgEFS,
     } = this.createVpc();
 
-    this.createRDS(
+    const topic = new sns.Topic(this, "snsAlarmTopic", {
+      topicName: "infraAlarm",
+    });
+
+    const db = this.createRDS(
       vpc,
       sgDB,
       snData,
@@ -53,7 +60,7 @@ export class CdkStack extends cdk.Stack {
     );
     const efs = this.createEFS(vpc, snData, sgEFS);
 
-    // S3 for backup
+    // TODO: S3 for backup
     const group = this.createInstances(
       vpc,
       snApp,
@@ -61,9 +68,10 @@ export class CdkStack extends cdk.Stack {
       params.amiName,
       ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
       8,
-      efs.fileSystemId
+      efs.fileSystemId,
+      topic
     );
-    // cloudwatch
+    this.createCloudwatchAlarms(topic, db.instanceIdentifier);
 
     const alb = this.createALB(vpc, sgALB, snIngress, group, params.albCertArn);
     this.createWAF(
@@ -131,8 +139,10 @@ export class CdkStack extends cdk.Stack {
 
     // VPC endpoints ---
     Object.entries({
-      // for cloudwatch logs
+      // for cloudwatch agent
       vpcLogsEndpoint: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      vpcEc2Endpoint: ec2.InterfaceVpcEndpointAwsService.EC2,
+      vpcMonitorEndpoint: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH,
       // for SSM SSH
       vpcEc2mEndpoint: ec2.InterfaceVpcEndpointAwsService.EC2_MESSAGES,
       vpcSsmmEndpoint: ec2.InterfaceVpcEndpointAwsService.SSM_MESSAGES,
@@ -213,13 +223,22 @@ export class CdkStack extends cdk.Stack {
     amiName: string,
     instanceType: ec2.InstanceType,
     volumeSize: number,
-    efsId: string
+    efsId: string,
+    topic: sns.Topic
   ): asg.AutoScalingGroup {
+    const machineImage = new ec2.LookupMachineImage({
+      name: amiName,
+      filters: { "owner-id": [this.account], state: ["available"] },
+    });
+
     const role = new iam.Role(this, "IAMRoleEC2", {
       assumedBy: new iam.ServicePrincipal("ec2.amazonaws.com"),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName(
           "service-role/AmazonEC2RoleforSSM"
+        ),
+        iam.ManagedPolicy.fromAwsManagedPolicyName(
+          "CloudWatchAgentServerPolicy"
         ),
       ],
     });
@@ -240,10 +259,16 @@ mount -a -t efs defaults
       allowAllOutbound: false,
       minCapacity: 2,
       maxCapacity: 4,
-      machineImage: new ec2.LookupMachineImage({
-        name: amiName,
-        filters: { "owner-id": [this.account], state: ["available"] },
-      }),
+      machineImage,
+      instanceMonitoring: asg.Monitoring.BASIC,
+      notifications: [
+        {
+          topic,
+          scalingEvents: new asg.ScalingEvents(
+            asg.ScalingEvent.INSTANCE_LAUNCH
+          ),
+        },
+      ],
       blockDevices: [
         {
           deviceName: "/dev/xvda",
@@ -259,6 +284,31 @@ mount -a -t efs defaults
       userData,
     });
     return group;
+  }
+
+  createCloudwatchAlarms(topic: sns.Topic, dbId: string) {
+    // TODO: 残りのアラーム
+    // group cpu
+    // group memory
+    // group disk
+    // db memory
+    const action = new cwactions.SnsAction(topic);
+    [
+      new cloudwatch.Alarm(this, "alarmRdsCpu", {
+        alarmName: "RDS_CPU_High",
+        threshold: 80,
+        evaluationPeriods: 2, // 10 minutes
+        metric: new cloudwatch.Metric({
+          namespace: "AWS/RDS",
+          metricName: "CPUUtilization",
+          dimensions: {
+            DBInstanceIdentifier: dbId,
+          },
+        }),
+      }),
+    ].forEach((alarm) => {
+      alarm.addAlarmAction(action);
+    });
   }
 
   createALB(
