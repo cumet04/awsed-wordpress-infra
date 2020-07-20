@@ -13,6 +13,7 @@ test("Empty Stack", () => {
   const stack = new Cdk.CdkStack(app, "MyTestStack", {
     // TODO: tmp params
     frontCertArn: env.FRONT_CERT_ARN!,
+    adminCertArn: env.ADMIN_CERT_ARN!,
     albDomain: "lb.wordpress.example.com",
     albCertArn: env.ALB_CERT_ARN!,
     albKeyName: "x-alb-pre-shared-key",

@@ -14,6 +14,7 @@ import * as cloudfront from "@aws-cdk/aws-cloudfront";
 
 interface IParams {
   frontCertArn: string;
+  adminCertArn: string;
   albDomain: string;
   albCertArn: string;
   albKeyName: string;
@@ -77,7 +78,14 @@ export class CdkStack extends cdk.Stack {
       group.autoScalingGroupName
     );
 
-    const alb = this.createALB(vpc, sgALB, snIngress, group, params.albCertArn);
+    const alb = this.createALB(
+      vpc,
+      sgALB,
+      snIngress,
+      group,
+      params.albCertArn,
+      params.adminCertArn
+    );
     this.createWAF(
       alb.loadBalancerArn,
       params.ownerIps,
@@ -369,7 +377,8 @@ mount -a -t efs defaults
     sg: ec2.SecurityGroup,
     subnets: ec2.SubnetSelection,
     group: asg.AutoScalingGroup,
-    certArn: string
+    lbCertArn: string,
+    adminCertArn: string
   ): elbv2.ApplicationLoadBalancer {
     const alb = new elbv2.ApplicationLoadBalancer(this, "ALB", {
       vpc,
@@ -387,7 +396,7 @@ mount -a -t efs defaults
     alb
       .addListener("albListner443", {
         port: 443,
-        certificateArns: [certArn],
+        certificateArns: [lbCertArn, adminCertArn],
       })
       .addTargets("albtgApp", {
         targets: [group],

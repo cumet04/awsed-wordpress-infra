@@ -5,11 +5,13 @@ import { CdkStack } from "../lib/cdk-stack";
 import { env } from "process";
 
 const app = new cdk.App();
+// TODO: env validation
 new CdkStack(
   app,
   "CdkStack",
   {
     frontCertArn: env.FRONT_CERT_ARN!,
+    adminCertArn: env.ADMIN_CERT_ARN!,
     albDomain: "lb.wordpress.example.com",
     albCertArn: env.ALB_CERT_ARN!,
     albKeyName: "x-alb-pre-shared-key",
