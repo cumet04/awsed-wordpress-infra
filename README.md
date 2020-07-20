@@ -62,6 +62,7 @@ if($_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https') {
 この時点でALBのドメイン経由でWordpressコンテンツが確認できるはず（初期投入ならインストール画面になる）
 
 ※1 パスワード内の記号のエスケープに注意; https://www.javadrive.jp/php/string/index4.html
+
 ※2 普段のメンテなどの作業はAWSコンソールから実施する想定
 
 
@@ -72,8 +73,16 @@ if($_SERVER['HTTP_X_FORWARDED_PROTO'] == 'https') {
 * ALB-1（Cloudfrontから受ける、一般ユーザの閲覧用。3. で指定したもの）
 * ALB-2（管理画面アクセス用）
 
-またAWSコンソールよりCloudfrontのDistributionを確認し、CNAMEsを設定しておく
+またAWSコンソールよりCloudfrontのDistributionを確認し、CNAMEsを設定しておく。
+
+なおRoute53を使うのであればwebサイト全体の閲覧ヘルスチェックが設定できるはず。
 
 #### 6. アラート通知用のSNSトピックのアクションを設定する
 SNSに`infraAlarm`というトピックができているため、適切にサブスクリプションを設定する。
 メールでもLambda->slackでもChatbotでも。
+
+
+### TODO
+* コンテンツ・DBバックアップをS3に取りたい
+  - 深夜バッチ的なやつ。EFSのドキュメントルート・DBダンプをS3に置く
+  - EC2にスクリプト配置＆[SSM & Lambdaで1台cron](https://qiita.com/cumet04/items/5888e037105e6ea5f6bc)すればできるはず
