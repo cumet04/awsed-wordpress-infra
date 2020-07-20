@@ -196,8 +196,8 @@ export class CdkStack extends cdk.Stack {
         version: rds.MysqlEngineVersion.VER_5_7_30,
       }),
       instanceType,
-      multiAz: false, // TODO: for development
-      deletionProtection: false, // TODO: for development
+      multiAz: true, // MEMO: false for development
+      deletionProtection: true, // MEMO: false for development
       masterUsername: dbUser,
       databaseName: dbName,
       allocatedStorage: storageSize,
