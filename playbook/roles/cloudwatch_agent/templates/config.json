@@ -36,7 +36,7 @@
     "aggregation_dimensions": [["AutoScalingGroupName"]],
     "metrics_collected": {
       "cpu": {
-        "measurement": ["cpu_usage_user", "cpu_usage_system"],
+        "measurement": ["cpu_usage_active"],
         "metrics_collection_interval": 60,
         "totalcpu": true
       },

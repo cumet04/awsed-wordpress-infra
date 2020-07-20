@@ -71,7 +71,11 @@ export class CdkStack extends cdk.Stack {
       efs.fileSystemId,
       topic
     );
-    this.createCloudwatchAlarms(topic, db.instanceIdentifier);
+    this.createCloudwatchAlarms(
+      topic,
+      db.instanceIdentifier,
+      group.autoScalingGroupName
+    );
 
     const alb = this.createALB(vpc, sgALB, snIngress, group, params.albCertArn);
     this.createWAF(
@@ -286,21 +290,70 @@ mount -a -t efs defaults
     return group;
   }
 
-  createCloudwatchAlarms(topic: sns.Topic, dbId: string) {
-    // TODO: 残りのアラーム
-    // group cpu
-    // group memory
-    // group disk
-    // db memory
+  createCloudwatchAlarms(topic: sns.Topic, dbId: string, groupName: string) {
     const action = new cwactions.SnsAction(topic);
     [
+      new cloudwatch.Alarm(this, "alarmEC2CPU", {
+        alarmName: "EC2_CPU_High",
+        threshold: 80,
+        period: cdk.Duration.minutes(1),
+        evaluationPeriods: 5, // 5 minutes
+        metric: new cloudwatch.Metric({
+          namespace: "CWAgent",
+          metricName: "cpu_usage_active",
+          dimensions: {
+            AutoScalingGroupName: groupName,
+          },
+        }),
+      }),
+      new cloudwatch.Alarm(this, "alarmEC2Memory", {
+        alarmName: "EC2_Memory_High",
+        threshold: 70,
+        period: cdk.Duration.minutes(1),
+        evaluationPeriods: 5, // 5 minutes
+        metric: new cloudwatch.Metric({
+          namespace: "CWAgent",
+          metricName: "mem_used_percent",
+          dimensions: {
+            AutoScalingGroupName: groupName,
+          },
+        }),
+      }),
+      new cloudwatch.Alarm(this, "alarmEC2Disk", {
+        alarmName: "EC2_Disk_High",
+        threshold: 70,
+        period: cdk.Duration.minutes(5),
+        evaluationPeriods: 2, // 10 minutes
+        metric: new cloudwatch.Metric({
+          namespace: "CWAgent",
+          metricName: "disk_used_percent",
+          dimensions: {
+            AutoScalingGroupName: groupName,
+          },
+        }),
+      }),
       new cloudwatch.Alarm(this, "alarmRdsCpu", {
         alarmName: "RDS_CPU_High",
         threshold: 80,
+        period: cdk.Duration.minutes(5),
         evaluationPeriods: 2, // 10 minutes
         metric: new cloudwatch.Metric({
           namespace: "AWS/RDS",
           metricName: "CPUUtilization",
+          dimensions: {
+            DBInstanceIdentifier: dbId,
+          },
+        }),
+      }),
+      new cloudwatch.Alarm(this, "alarmRdsMemory", {
+        alarmName: "RDS_Memory_Low",
+        threshold: 256 * 1024 * 1024,
+        comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+        period: cdk.Duration.minutes(5),
+        evaluationPeriods: 2, // 10 minutes
+        metric: new cloudwatch.Metric({
+          namespace: "AWS/RDS",
+          metricName: "FreeableMemory",
           dimensions: {
             DBInstanceIdentifier: dbId,
           },
