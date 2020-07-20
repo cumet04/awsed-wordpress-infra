@@ -5,6 +5,28 @@
 
 **注意: この構成による実運用実績は無いため、思わぬ欠陥がある可能性は否定できません**
 
+### 構成
+![diagram](diagram.svg)
+
+#### Ingress (Cloudfront, WAF, ALB)
+一般ユーザのリクエストはCloudfrontで、管理画面アクセスはALB直（別ドメイン割当）で行う。
+
+負荷対策はCloudfrontでやる構成（ユーザごとやリクエストごとに動的なコンテンツは無い想定）。  
+AWS WAFをALBに紐付け、いわゆるWAFの役割＆管理画面やIPでのアクセス制限を行う。
+
+#### Computing (EC2, AutoscalingGroup)
+コンピューティングはEC2。インスタンス管理の都合でAutoscalingGroupにしているが、自動スケールアウトは負荷増減は未設定（設定しても問題はない）。
+
+メトリクスやログはCloudwatch agentで送信。
+
+※Fargateにしたかったのだが、Fargate + EFSがCDK(Cloudformation)未対応のため見送り
+
+#### Data store (RDS, EFS)
+DBはスタンダードにRDS。
+
+ディスクストレージはEFSで、ドキュメントルート以下をまるっと格納。
+
+
 ### 初期構築手順
 
 #### 1. EC2のAMIの用意
@@ -83,6 +105,7 @@ SNSに`infraAlarm`というトピックができているため、適切にサ�
 
 
 ### TODO
+* もろもろの詳細を書いた記事執筆
 * コンテンツ・DBバックアップをS3に取りたい
   - 深夜バッチ的なやつ。EFSのドキュメントルート・DBダンプをS3に置く
   - EC2にスクリプト配置＆[SSM & Lambdaで1台cron](https://qiita.com/cumet04/items/5888e037105e6ea5f6bc)すればできるはず
